@@ -1,0 +1,9 @@
+name: test-snapd-fibre-channel-initiator
+version: 1.0
+summary: Test snap for the fibre-channel-initiator interface
+description: A basic snap to access the fibre-channel-initiator interface
+
+apps:
+    with-fibre-channel-initiator-plug:
+        command: bin/sh
+        plugs: [fibre-channel-initiator]

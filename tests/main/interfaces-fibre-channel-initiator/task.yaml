@@ -1,0 +1,102 @@
+summary: Ensure that the fibre-channel-initiator interface works.
+
+details: |
+  The fibre-channel-initiator interface allows snaps to read Fibre Channel
+  initiator and remote-port discovery information and to use the SCSI sysfs
+  control paths needed by storage orchestration software.
+
+  A snap which defines a fibre-channel-initiator plug must be shown in the
+  interfaces list. The plug must not be auto-connected on install and, as
+  usual, must be able to be reconnected.
+
+  This test does not write real sysfs SCSI scan, delete, or zFCP control
+  attributes because those operations can affect host storage state. Instead,
+  it verifies the generated AppArmor profile for those write rules and performs
+  confined read-only access to Fibre Channel sysfs paths when the host exposes
+  them.
+
+systems: [ubuntu-2*]
+
+environment:
+  TEST_SNAP: test-snapd-fibre-channel-initiator
+  TEST_APP: test-snapd-fibre-channel-initiator.with-fibre-channel-initiator-plug
+
+prepare: |
+  "$TESTSTOOLS"/snaps-state install-local "$TEST_SNAP"
+
+execute: |
+  echo "The interface is not connected by default"
+  snap interfaces -i fibre-channel-initiator | MATCH -- "- +$TEST_SNAP:fibre-channel-initiator"
+
+  echo "When the interface is connected"
+  snap connect "$TEST_SNAP":fibre-channel-initiator
+
+  echo "Then the generated AppArmor profile grants Fibre Channel discovery reads"
+  PROFILE="/var/lib/snapd/apparmor/profiles/snap.$TEST_SNAP.with-fibre-channel-initiator-plug"
+  test -e "$PROFILE"
+  grep -Fq "/sys/class/fc_host/{,**} r," "$PROFILE"
+  grep -Fq "/sys/class/fc_transport/{,**} r," "$PROFILE"
+  grep -Fq "/sys/class/fc_remote_ports/{,**} r," "$PROFILE"
+  grep -Fq "/sys/devices/**/fc_host/{,**} r," "$PROFILE"
+  grep -Fq "/sys/devices/**/fc_transport/{,**} r," "$PROFILE"
+  grep -Fq "/sys/devices/**/fc_remote_ports/{,**} r," "$PROFILE"
+
+  echo "And the generated AppArmor profile grants remote-port-backed SCSI access"
+  grep -Fq "/sys/devices/**/rport-[0-9]*:[0-9]*-[0-9]*/{,**} r," "$PROFILE"
+  grep -Fq "/sys/devices/**/rport-[0-9]*:[0-9]*-[0-9]*/**/[0-9]*:[0-9]*:[0-9]*:[0-9]*/{rescan,delete} rw," "$PROFILE"
+  grep -Fq "/sys/devices/**/rport-[0-9]*:[0-9]*-[0-9]*/**/[0-9]*:[0-9]*:[0-9]*:[0-9]*/{rescan,delete} ra," "$PROFILE"
+
+  echo "And the generated AppArmor profile grants SCSI host scan writes"
+  grep -Fq "/sys/class/scsi_host/host[0-9]*/scan rw," "$PROFILE"
+  grep -Fq "/sys/class/scsi_host/host[0-9]*/scan ra," "$PROFILE"
+  grep -Fq "/sys/devices/**/scsi_host/host[0-9]*/scan rw," "$PROFILE"
+  grep -Fq "/sys/devices/**/scsi_host/host[0-9]*/scan ra," "$PROFILE"
+
+  echo "And the generated AppArmor profile grants SCSI device rescan writes"
+  grep -Fq "/sys/bus/scsi/drivers/sd/[0-9]*:[0-9]*:[0-9]*:[0-9]*/rescan rw," "$PROFILE"
+  grep -Fq "/sys/class/scsi_device/[0-9]*:[0-9]*:[0-9]*:[0-9]*/device/rescan rw," "$PROFILE"
+  grep -Fq "/sys/class/scsi_disk/[0-9]*:[0-9]*:[0-9]*:[0-9]*/device/rescan rw," "$PROFILE"
+  grep -Fq "/sys/block/*/device/rescan rw," "$PROFILE"
+  grep -Fq "/sys/devices/**/[0-9]*:[0-9]*:[0-9]*:[0-9]*/rescan rw," "$PROFILE"
+  grep -Fq "/sys/devices/**/block/*/device/rescan rw," "$PROFILE"
+
+  echo "And the generated AppArmor profile grants zFCP control writes"
+  grep -Fq "/sys/bus/ccw/drivers/zfcp/{,**} r," "$PROFILE"
+  grep -Fq "/sys/bus/ccw/drivers/zfcp/**/{port_rescan,unit_add,unit_remove} rw," "$PROFILE"
+  grep -Fq "/sys/bus/ccw/drivers/zfcp/**/{port_rescan,unit_add,unit_remove} ra," "$PROFILE"
+  grep -Fq "/sys/devices/css[0-9]*/**/{port_rescan,unit_add,unit_remove} rw," "$PROFILE"
+  grep -Fq "/sys/devices/css[0-9]*/**/{port_rescan,unit_add,unit_remove} ra," "$PROFILE"
+
+  echo "And the generated AppArmor profile grants SCSI WWID and delete access"
+  grep -Fq "/sys/block/*/device/wwid r," "$PROFILE"
+  grep -Fq "/sys/block/*/device/delete rw," "$PROFILE"
+  grep -Fq "/sys/devices/**/block/*/device/wwid r," "$PROFILE"
+  grep -Fq "/sys/devices/**/block/*/device/delete rw," "$PROFILE"
+  grep -Fq "/sys/devices/**/[0-9]*:[0-9]*:[0-9]*:[0-9]*/wwid r," "$PROFILE"
+  grep -Fq "/sys/devices/**/[0-9]*:[0-9]*:[0-9]*:[0-9]*/delete rw," "$PROFILE"
+  grep -Fq "/sys/devices/**/rport-[0-9]*:[0-9]*-[0-9]*/**/[0-9]*:[0-9]*:[0-9]*:[0-9]*/wwid r," "$PROFILE"
+
+  echo "And the generated AppArmor profile does not grant adjacent storage access"
+  ! grep -Fq "/dev/sg" "$PROFILE"
+  ! grep -Fq "/dev/sd" "$PROFILE"
+  ! grep -Fq "/dev/disk" "$PROFILE"
+  ! grep -Fq "/dev/mapper" "$PROFILE"
+  ! grep -Fq "multipathd" "$PROFILE"
+  ! grep -Fq "issue_lip" "$PROFILE"
+
+  echo "And the snap can read Fibre Channel discovery paths when present"
+  for path in /sys/class/fc_host /sys/class/fc_transport /sys/class/fc_remote_ports; do
+      if [ -e "$path" ]; then
+          "$TEST_APP" -c "ls $path"
+      fi
+  done
+
+  if [ "$(snap debug confinement)" = partial ] ; then
+      exit 0
+  fi
+
+  echo "When the plug is disconnected"
+  snap disconnect "$TEST_SNAP":fibre-channel-initiator
+
+  echo "Then the interface can be connected again"
+  snap connect "$TEST_SNAP":fibre-channel-initiator

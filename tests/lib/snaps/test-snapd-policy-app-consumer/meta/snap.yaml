@@ -65,6 +65,9 @@ apps:
   docker-support:
     command: bin/run
     plugs: [ docker-support ]
+  fibre-channel-initiator:
+    command: bin/run
+    plugs: [ fibre-channel-initiator ]
   fpga:
     command: bin/run
     plugs: [ fpga ]
